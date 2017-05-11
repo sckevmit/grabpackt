@@ -89,22 +89,11 @@ def configure():
     config = Config()
     config.username = configuration.get('packt', 'user')
     config.password = configuration.get('packt', 'pass')
-    config.email_enabled = configuration.getboolean('mail', 'send_mail')
-
-    # only parse the rest when necessary
-    if config.email_enabled:
-        config.smtp_user = configuration.get('smtp', 'user')
-        config.smtp_pass = configuration.get('smtp', 'pass')
-        config.smtp_host = configuration.get('smtp', 'host')
-        config.smtp_port = configuration.getint('smtp', 'port')
-        config.email_to = configuration.get('mail', 'to')
-        config.email_types = configuration.get('mail', 'types')
-        config.email_links_only = configuration.getboolean('mail', 'links_only')
-        config.email_zip = configuration.getboolean('mail', 'zip')
-        config.email_force_zip = configuration.getboolean('mail', 'force_zip')
-        config.email_max_size = configuration.getint('mail', 'max_size')
-        config.email_delete = configuration.getboolean('mail', 'delete')
-
+    config.download_enabled = configuration.getboolean('packt','download')
+    config.download_types = configuration.get('packt', 'types')
+    config.links_only = configuration.getboolean('packt', 'links_only')
+    config.zip = configuration.getboolean('packt', 'zip')
+    config.force_zip = configuration.getboolean('packt', 'force_zip')
     return config
 
 
@@ -159,6 +148,7 @@ def get_owned_book_ids(session):
 
     # iterate all of the book elements, getting and converting the nid if it exists
     owned_book_ids = {int(book_element.get('nid')): book_element.get('title') for book_element in book_elements if book_element.get('nid')}
+    print(owned_book_ids)
 
     return owned_book_ids
 
@@ -212,6 +202,7 @@ def prepare_links(config, book_element):
 
     # get the book id
     book_id = str(book_element.get('nid'))
+    
 
     #BOOKS_DOWNLOAD_URL = "https://www.packtpub.com/ebook_download/" # + {id1}/(pdf|epub|mobi)
     #CODE_DOWNLOAD_URL = "https://www.packtpub.com/code_download/" # + {id1}
@@ -228,7 +219,7 @@ def prepare_links(config, book_element):
 
     # get the links that should be executed
     links = {}
-    for option in list(str(config.email_types)):
+    for option in list(str(config.download_types)):
         if option in list("pemc"):
             # perform the option, e.g. get the pdf, epub, mobi and/or code link
             dl_type, link = valid_option_links[option]
@@ -237,7 +228,7 @@ def prepare_links(config, book_element):
             if link in available_links:
                 # each of the links has to be prefixed with the login_url
                 links[dl_type] = LOGIN_URL + link[1:]
-
+    print(links)
     return links
 
 
@@ -249,11 +240,12 @@ def download(session, book_id, links):
     book_id -- the identifier of the book
     links -- a dictionary of dl_type => URL type
     """
-    if not os.path.exists(DOWNLOAD_DIRECTORY):
-        os.makedirs(DOWNLOAD_DIRECTORY)
+    if not os.path.exists(DOWNLOAD_DIRECTORY + "/" + book_id):
+        os.makedirs(DOWNLOAD_DIRECTORY + "/" + book_id)
     files = {}
     for dl_type, link in links.items():
-        filename = DOWNLOAD_DIRECTORY + book_id + '.' + dl_type
+        filename = DOWNLOAD_DIRECTORY + book_id + '/'  + book_id + '.' + dl_type
+        print(filename)
 
         # don't download files more than once if not necessary...
         if not os.path.exists(filename):
@@ -285,223 +277,6 @@ def create_zip(files, book_name):
     return zip_filename
 
 
-def prepare_attachments(config, files, zip_filename=""):
-    """Prepares attachments for sending in MIME message.
-
-    Keyword arguments:
-    config -- the configuration object
-    files -- a dictionary of dl_type => file name
-    zip_filename -- the name of the zip file, if it has to be created
-    """
-    maximum_size = config.email_max_size * 1000000 # config is MB, convert to bytes.
-    attachments = {}
-    # check to see if there were files downloaded before
-    if len(files) > 0:
-        # if there were, we have to attach them, but first more logic
-        if zip_filename != "":
-            # the zip was actually created, we have to attach this one
-            # IF: it is not bigger than the maximum file size
-            size = os.path.getsize(zip_filename)
-            if size <= maximum_size:
-                attachments['zip'] = zip_filename
-        else:
-            # if zip_filename is not set, get total size of the files
-            # then, if they don't exceed max, add them all
-            size = 0
-            for _, filename in files.items():
-                size += os.path.getsize(filename)
-            if size <= maximum_size:
-                attachments = files
-
-    return attachments
-
-
-
-def create_message(config, book_name, links, attachments, is_new_book, is_error=False):
-    """Construct a MIME message.
-
-    config -- the configuration object
-    book_name -- the name of the book
-    links -- a list of links to include in the mail
-    attachments -- a list of files to be attached to the mail
-    """
-    fromaddr = config.smtp_user
-    toaddr = config.email_to
-
-    msg = MIMEMultipart()
-
-    msg['From'] = fromaddr
-    msg['To'] = toaddr
-    msg['Subject'] = "GrabPackt: " + book_name
-
-    # get the body by creating an html mail
-    body = html_mail(book_name, links, is_new_book, is_error)
-
-    # attach the body
-    msg.attach(MIMEText(body, 'html'))
-
-    # check if we need to do attachments
-    if len(attachments) > 0:
-        if 'zip' in attachments.keys():
-
-            # only attach the zip file
-            with open(attachments['zip'], 'rb') as attachment:
-
-                mail_filename = book_name + '.zip'
-
-                # creating a part
-                part = MIMEBase('application', 'octet-stream')
-                part.set_payload((attachment).read())
-                encoders.encode_base64(part)
-                part.add_header('Content-Disposition', 'attachment; filename="{0}"'
-                                .format(mail_filename))
-
-                msg.attach(part)
-
-        else:
-            # no zip to process; go through the keys of attachments
-            for dl_type, filename in attachments.items():
-
-                with open(filename, 'rb') as attachment:
-                    mail_filename = book_name + '.' + dl_type if dl_type != 'code' else book_name + '.zip'
-
-                    part = MIMEBase('application', 'octet-stream')
-                    part.set_payload((attachment).read())
-                    encoders.encode_base64(part)
-                    part.add_header('Content-Disposition', 'attachment; filename="{0}"'.format(mail_filename))
-
-                    msg.attach(part)
-
-    return msg
-
-def send_message(config, message, book_name, links, is_new_book):
-    """Sends a MIME message via SMTP.
-
-    Keyword arguments:
-    config -- the configuration object
-    message -- the MIME message to send
-    """
-    server = smtplib.SMTP(config.smtp_host, config.smtp_port)
-    server.starttls()
-    server.login(config.smtp_user, config.smtp_pass)
-
-    try:
-        server.sendmail(config.smtp_user, config.email_to, message.as_string())
-    except (smtplib.SMTPDataError, smtplib.SMTPSenderRefused) as err:
-        # first, make sure we nicely close the server
-        server.quit()
-
-        # handle the error message 
-        handle_error_message(config, err, book_name, links, is_new_book)
-
-        # return from the function
-        return False
-        
-        
-    server.quit()
-
-    return True
-
-
-def handle_error_message(config, err, book_name, links, is_new_book):
-    """Handles SMTP error messages and constructs appropriate mail.
-
-    Keyword arguments:
-    config -- the configuration object
-    err -- an SMTPDataError or SMTPSenderRefused error
-    """
-    code, resp = err[:2]
-    is_sender_refused_error = isinstance(err, smtplib.SMTPSenderRefused)
-    
-    # construct the plain text body
-    #body = 'Your book was claimed, but could not be delivered by mail.'
-    #if is_sender_refused_error:
-    #    from_addr = err[2]
-    #    body += ' This is likely due to size limits.'
-    #else:
-    #    body += ' This is likely due to attachment restrictions.'
-
-    #body += ' Book: ' + book_name
-
-    #fromaddr = config.smtp_user
-    #toaddr = config.email_to
-
-    #msg = MIMEMultipart()
-
-    #msg['From'] = fromaddr
-    #msg['To'] = toaddr
-    #msg['Subject'] = "GrabPackt book claimed!"
-
-    # attach the body
-    #msg.attach(MIMEText(body, 'plain'))
-
-    # override the message creation...
-    message = create_message(config, book_name, links, attachments=[], is_new_book=is_new_book, is_error=True)
-
-
-    # send the message
-    # send_error_message(config, msg)
-    send_message(config, message, book_name, links, is_new_book)
-
-
-def cleanup(config, files, zip_filename=""):
-    """Removes temporary downloaded files.
-
-    Keyword arguments
-    config -- the configuration object
-    files -- a dictionary of dl_type => file name
-    zip_filename -- the name of the zip file
-    """
-    # the zip file is always deleted, if it's set
-    if zip_filename != "" and os.path.exists(zip_filename):
-        os.remove(zip_filename)
-
-    # check if we have to delete the downloaded files...
-    if config.email_delete:
-        for _, filename in files.items():
-            if os.path.exists(filename):
-                os.remove(filename)
-
-
-def html_mail(book_title, links, is_new_book, is_error=False):
-    """Creates a neat looking HTML formatted message.
-    
-    Keyword arguments:
-    book_title -- the title of the book
-    links -- a dictionary of requested links
-    is_new_book -- boolean that indicates whether the book was newly claimed or not
-    """
-    template_file = os.path.dirname(os.path.realpath(__file__)) + os.sep + 'template.html'
-    html = "" 
-    with open(template_file, 'r') as handle:
-        html = handle.read()
-
-    # replace the title of the book
-    html = html.replace(u'{{REPLACE_TITLE}}', book_title.replace(u' [eBook]', u''))
-
-    if is_new_book:
-        if len(links.keys()) > 0:
-            a_parts = []
-            for dl_type, link in links.items():
-                a_parts.append(u'<a href="{0}" target="_blank">{1}</a>'.format(link, dl_type.upper()))
-        
-            link_parts = u"   |   ".join(a_parts)
-            html = html.replace(u'{{REPLACE_LINKS}}', link_parts)
-
-        else: 
-            html = html.replace(u'{{REPLACE_LINKS}}', u'No links found.')
-    else:
-        # the book was not newly claimed; create appropriate message.
-        html = html.replace(u'{{REPLACE_LINKS}}', u'You already own this book.')
-
-
-    if is_error:
-        html = html.replace(u'{{ERROR_MESSAGE}}', u'An error occurred during sending the attachments.')
-    else:
-        html = html.replace(u'{{ERROR_MESSAGE}}', u'')
-
-    return html
-
 
 def main():
     """Performs all of the logic."""
@@ -530,73 +305,44 @@ def main():
 
                 # get a list of the IDs of all the books already owned
                 owned_book_ids = get_owned_book_ids(session)
+                has_claimed, claim_text = claim(session, claim_path)
 
-                # when not previously owned, grab the book
-                if int(new_book_id) not in owned_book_ids.keys():
+                if config.download_enabled:
+                    print("download_enabled")
 
-                    # perform the claim
-                    has_claimed, claim_text = claim(session, claim_path)
+                    # following is a redundant check; first verion of uniqueness;
+                    # the book_id should be the nid of the first child of the list of books on the my-ebooks page
+                    book_list_element = etree.HTML(claim_text, UTF8_PARSER).xpath(BOOK_LIST_XPATH)[0]
 
-                    if has_claimed:
+                    for boo in book_list_element.getchildren():
+                        book_element = boo
+                        book_id = boo.get('nid')
+                        if book_id == None:
+                            break
 
-                        if config.email_enabled:
+                        # extract the name of the book
+                        book_title = book_element.get('title')
 
-                            # following is a redundant check; first verion of uniqueness;
-                            # the book_id should be the nid of the first child of the list of books on the my-ebooks page
-                            book_list_element = etree.HTML(claim_text, UTF8_PARSER).xpath(BOOK_LIST_XPATH)[0]
-                            first_book_element = book_list_element.getchildren()[0]
+                        # get the links that should be downloaded and/or listed in mail
+                        links = prepare_links(config, book_element)
 
-                            if first_book_element.get('nid') == str(new_book_id): # equivalent: str(book_id) in first_book_element.values()
-                                # the newly claimed book id is indeed a new book (not claimed before)
-                                book_element = first_book_element
-                                book_id = new_book_id
+                        # if we only want the links, we're basically ready for sending an email
+                        # else we need some more juggling downloading the goodies
+                        files = {}
+                        zip_filename = ""
+                        if not config.links_only:
+                            # first download the files to a temporary location relative to grabpackt
+                            print("Downloading book_id {}".format(book_id))
+                            print("Downloading title {}".format(book_title))
+                            files = download(session, book_id, links)
 
-                                # extract the name of the book
-                                book_title = book_element.get('title')
+                            # next check if we need to zip the downloaded files
+                            if config.zip:
+                                # only pack files when there is more than 1, or has been enforced
+                                if len(files) > 1 or config.force_zip:
+                                    zip_filename = create_zip(files, book_title)
 
-                                # get the links that should be downloaded and/or listed in mail
-                                links = prepare_links(config, book_element)
-
-                                # if we only want the links, we're basically ready for sending an email
-                                # else we need some more juggling downloading the goodies
-                                files = {}
-                                zip_filename = ""
-                                if not config.email_links_only:
-                                    # first download the files to a temporary location relative to grabpackt
-                                    files = download(session, book_id, links)
-
-                                    # next check if we need to zip the downloaded files
-                                    if config.email_zip:
-                                        # only pack files when there is more than 1, or has been enforced
-                                        if len(files) > 1 or config.email_force_zip:
-                                            zip_filename = create_zip(files, book_title)
-
-
-                                # prepare attachments for sending
-                                attachments = prepare_attachments(config, files, zip_filename)
-
-                                # construct the email with all necessary items...
-                                message = create_message(config, book_title, links, attachments, is_new_book=True)
-
-                                # send the email...
-                                send_message(config, message, book_title, links, is_new_book=True)
-
-                                # perform cleanup
-                                cleanup(config, files, zip_filename)
-
-                else:
-                    # we already owned the book; send a mail that we already owned the book
-                    if config.email_enabled:
-                        # pick the book_id entry from owned_book_ids
-                        book_title = owned_book_ids[int(new_book_id)].replace(' [eBook]', '')
-
-                        # create a message with empty links and attachments
-                        links = attachments = {}
-                        message = create_message(config, book_title, links, attachments, is_new_book=False)
-
-                        # send the message; no cleanup necessary!
-                        send_message(config, message, book_title, links, is_new_book=False)
-                                                   
+                                           
 
 if __name__ == "__main__":
     main()

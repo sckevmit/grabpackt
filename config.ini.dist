@@ -2,37 +2,11 @@
 
 # Packt Publishing credentials
 [packt]
-user = johndoe@example.com
-pass = password
-
-# SMTP Credentials
-[smtp]
-host = smtp@example.com
-port = 587
-user = janedoe@example.com
-pass = password
-
-# Settings for the mail that is received
-
-# send_mail:    Enable or disable sending emails.
-# to:           Address to send mail to.
-# types:        Which file types: (p)df, (e)pub, (m)obi and/or (c)ode.
-# links_only:   Set to true to not receive attachments, only links.
-# zip:          When true, selected file types are packaged in zip.
-# force_zip:    When true, a zip is created for a single file also.
-# max_size:     The maximum file size of (combined) attachment(s) in MB.
-# delete:       When true, delete the files when done. Zip is always deleted.
-
-[mail]
-send_mail = true
-to = johndoe@example.com    
+user = user
+pass = pass
+download = true
 types = pemc                
 links_only = false              
 zip = false                     
 force_zip = false               
-max_size = 10               
-delete = true                  
-
-
-
 
